@@ -10,51 +10,52 @@ class AIService:
     def find_match(ingredients, recipes_context, image_data=None):
         try:
             api_key = st.secrets["GEMINI_API_KEY"]
+            # שימוש במודל 2.5 Flash כפי שביקשת
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+
             headers = {'Content-Type': 'application/json'}
 
-            # פרומפט משופר שמתמקד בזיהוי ויזואלי עוצמתי
+            # פרומפט "חריף" לזיהוי תמונה בלבד וסריקה עמוקה של החוברת
             prompt_text = f"""
-            תפקיד: שף מומחה לזיהוי מצרכים מתמונות.
+            משימה: מצא מתכון שוקולד מהחוברת על סמך ראייה בלבד!
 
-            הוראות עבודה:
-            1. ניתוח תמונה: אם צורפה תמונה, זהה את כל המצרכים שבה ברמת דיוק גבוהה (למשל: "שוקולד מריר", "חמאה", "ריבת חלב").
-            2. הצלבה עם החוברת: חפש בטקסט החוברת מטה מתכון שמשתמש במצרכים שזיהית בתמונה (או במצרכים שנכתבו בטקסט).
-            3. עדיפות: אם זיהית שוקולד בתמונה, תן עדיפות למתכוני שוקולד מהחוברת.
+            1. ניתוח ויזואלי: זהה כל פריט בתמונה. אם זה שוקולד מריר של ורד הגליל (או כל מותג אחר), שים לב לזה!
+            2. סריקה טקסטואלית: עבור על כל חוברת המתכונים מטה. אל תפספס אף מתכון שמכיל את המצרכים שזיהית.
+            3. התאמה: אם זיהית שוקולד בתמונה, חובה למצוא מתכון שוקולד מהחוברת.
 
             טקסט החוברת:
             ---
-            {recipes_context[:12000]}
+            {recipes_context[:15000]}
             ---
 
-            מצרכים בטקסט (אם יש): {ingredients if ingredients else "הסתמך על התמונה בלבד"}
+            מצרכים נוספים מהמשתמש: {ingredients if ingredients else "הסתמך על התמונה בלבד"}
 
-            החזר אך ורק JSON תקין בעברית:
+            החזר JSON בלבד (בעברית):
             {{
-                "title": "שם המנה המדויק מהחוברת",
-                "ingredients": ["רשימת המצרכים מהמתכון בחוברת"],
-                "instructions": ["הוראות ההכנה מהחוברת"],
-                "source": "שם קובץ המקור"
+                "identified_ingredients": ["רשימת המצרכים שזיהית בתמונה"],
+                "title": "שם המתכון המדויק מהחוברת",
+                "ingredients": ["מצרכים"],
+                "instructions": ["הוראות"],
+                "source": "שם הקובץ"
             }}
 
-            אם לא מצאת שום מתכון שמתאים למצרכים שבתמונה, החזר JSON עם title: "לא נמצאה התאמה".
+            אם לא נמצאה התאמה, החזר: {{"title": "לא נמצאה התאמה", "identified_ingredients": ["מה שראית"]}}
             """
 
             parts = [{"text": prompt_text}]
-
             if image_data:
-                # שימוש ב-mime_type גמיש (תומך ב-JPG ו-PNG)
+                # הפיכת התמונה ל-Base64
                 image_base64 = base64.b64encode(image_data).decode('utf-8')
                 parts.append({
                     "inline_data": {
-                        "mime_type": "image/jpeg",
+                        "mime_type": "image/png",
                         "data": image_base64
                     }
                 })
 
             payload = {"contents": [{"parts": parts}]}
 
-            # verify=False לטובת משתמשי נטפרי
+            # שליחת הבקשה עם timeout וביטול אימות SSL לנטפרי
             response = requests.post(url, headers=headers, json=payload, verify=False, timeout=30)
 
             if response.status_code == 200:
@@ -63,11 +64,11 @@ class AIService:
                 match = re.search(r'\{.*\}', text_response, re.DOTALL)
                 if match:
                     return json.loads(match.group())
-                return {"error": "הצלחנו להתחבר, אך התשובה לא במבנה הנכון"}
+                return {"error": "התשובה לא חזרה בפורמט JSON"}
             elif response.status_code == 429:
-                return {"error": "חרגת ממכסת הבקשות של Gemini 2.5 (20 ליום). נסי שוב בעוד דקה."}
+                return {"error": "Quota Exceeded: הגעת למכסה היומית (20 בקשות). נסי שוב מחר ב-10:00 או החליפי פרויקט."}
             else:
-                return {"error": f"שגיאה {response.status_code}: {response.text}"}
+                return {"error": f"Status {response.status_code}: {response.text}"}
 
         except Exception as e:
             return {"error": str(e)}
